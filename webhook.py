@@ -20,17 +20,18 @@ try:
     if not credentials_json:
         logger.error('❌ Credenciais não encontradas')
         raise ValueError('Credenciais do Google não configuradas')
-    logger.info('🔑 Credenciais carregadas com sucesso')
+    logger.info('🔑 Credenciais: %s...', credentials_json[:50])
     credentials_info = json.loads(credentials_json)
     credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     service = build('sheets', 'v4', credentials=credentials)
     logger.info('✅ Conexão com Google Sheets estabelecida')
 except Exception as e:
-    logger.error('❗ Erro ao conectar com Google Sheets: %s', e)
+    logger.error('❗ Erro na conexão: %s', e)
     raise
 
 @app.route('/', methods=['GET'])
 def home():
+    logger.info('🏠 Endpoint raiz')
     return '✅ API do Rol de Visitas funcionando!'
 
 @app.route('/webhook', methods=['POST'])
@@ -39,54 +40,54 @@ def webhook():
     try:
         data = request.get_json(silent=True)
         if not data:
-            logger.warning('⚠️ JSON inválido ou não fornecido')
-            return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 200
+            logger.warning('⚠️ JSON inválido')
+            return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 400
 
-        logger.info('📄 JSON recebido: %s', json.dumps(data, ensure_ascii=False))
+        logger.info('📄 JSON: %s', json.dumps(data, ensure_ascii=False))
         matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
-
         if not matricula:
-            logger.warning('⚠️ Matrícula não informada no parâmetro')
-            return jsonify({'fulfillmentText': '⚠️ Matrícula não informada.'}), 200
+            logger.warning('⚠️ Matrícula não informada')
+            return jsonify({'fulfillmentText': '⚠️ Matrícula não informada.'}), 400
 
-        # ✅ Normaliza matrícula (corrige float ou int)
+        # ✅ Normalize a matrícula
         matricula = str(int(float(matricula))).strip()
         logger.info('📌 Matrícula normalizada: %s', matricula)
 
-        # Consulta a planilha
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID,
-            range=RANGE_NAME
-        ).execute()
-
-        rows = result.get('values', [])
-        logger.info('📄 Total de linhas lidas: %d', len(rows))
+        try:
+            result = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID,
+                range=RANGE_NAME
+            ).execute()
+            rows = result.get('values', [])
+            logger.info('📄 Linhas: %s', rows)
+            if not rows:
+                logger.warning('⚠️ Planilha vazia')
+                return jsonify({'fulfillmentText': '❌ Planilha sem dados.'}), 404
+        except HttpError as e:
+            logger.error('❗ Erro na planilha: %s', e)
+            return jsonify({'fulfillmentText': f'❌ Erro ao acessar a planilha: {e}'}), 500
 
         for row in rows:
             if not row or len(row) < 1:
                 continue
-
             matricula_planilha = str(row[0]).strip()
-            logger.info('🔍 Comparando %s == %s', matricula_planilha, matricula)
-
+            logger.info('🔍 Comparando: %s == %s', matricula_planilha, matricula)
             if matricula_planilha == matricula:
                 visitante = row[1] if len(row) > 1 else 'Desconhecido'
                 situacao = row[2] if len(row) > 2 else 'Indefinida'
                 motivo = row[3] if len(row) > 3 else 'Nenhum motivo informado'
                 resposta = f'👤 Visitante: {visitante}\n📌 Situação: {situacao}\n📄 Motivo: {motivo}'
-                logger.info('✅ Matrícula encontrada. Enviando resposta.')
-                return jsonify({'fulfillmentText': resposta}), 200
+                logger.info('✅ Encontrada: %s', resposta)
+                return jsonify({'fulfillmentText': resposta})
 
-        # ❌ Se nenhuma linha bateu com a matrícula:
-        resposta_nao_encontrada = '❌ Nenhuma informação encontrada para esta matrícula.'
-        logger.warning(resposta_nao_encontrada)
-        return jsonify({'fulfillmentText': resposta_nao_encontrada}), 200
+        logger.warning('❌ Matrícula %s não encontrada', matricula)
+        return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'})
 
     except Exception as e:
-        logger.error('❗ Erro no processamento do webhook: %s', e, exc_info=True)
-        return jsonify({'fulfillmentText': '❌ Erro interno ao consultar a matrícula.'}), 200
+        logger.error('❗ Erro: %s', e, exc_info=True)
+        return jsonify({'fulfillmentText': f'❌ Erro interno: {e}'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    logger.info('🚀 Servidor rodando na porta %d', port)
+    logger.info('🚀 Servidor na porta %d', port)
     app.run(host='0.0.0.0', port=port)
