@@ -11,12 +11,13 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
 RANGE_NAME = 'carteirinhas_ok!A2:D'  # Nome da aba correta
 
-# Carrega as credenciais do JSON a partir da variável de ambiente
+# Carrega as credenciais do JSON da variável de ambiente
 credentials_info = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
 credentials = service_account.Credentials.from_service_account_info(
     credentials_info, scopes=SCOPES
 )
 
+# Inicializa o serviço do Google Sheets
 service = build('sheets', 'v4', credentials=credentials)
 
 @app.route('/', methods=['GET'])
@@ -39,7 +40,7 @@ def webhook():
     resposta = '❌ Matrícula não encontrada. Verifique se digitou corretamente.'
 
     for row in values:
-        if len(row) >= 1 and row[0] == matricula:
+        if len(row) >= 1 and str(row[0]).strip() == str(matricula).strip():
             nome_visitante = row[1] if len(row) > 1 else 'Desconhecido'
             situacao = row[2] if len(row) > 2 else 'Indefinida'
             motivo = row[3] if len(row) > 3 else 'Nenhum motivo informado'
