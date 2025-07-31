@@ -49,8 +49,9 @@ def webhook():
             logger.warning('⚠️ Matrícula não informada')
             return jsonify({'fulfillmentText': '⚠️ Matrícula não informada.'}), 400
 
-        matricula = str(matricula).strip()
-        logger.info('📌 Matrícula: %s', matricula)
+        # ✅ CORREÇÃO AQUI:
+        matricula = str(int(float(matricula))).strip()
+        logger.info('📌 Matrícula normalizada: %s', matricula)
 
         try:
             result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
