@@ -9,7 +9,7 @@ app = Flask(__name__)
 # Configuração da API do Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1UBYaeXwxxyO_7-FWDBlf_iOicvsB8oNeDyZ6Hz0U5RM'
-RANGE_NAME = 'Respostas!A2:D'
+RANGE_NAME = 'carteirinhas_ok!A2:D'  # Nome da aba correta
 
 # Carrega as credenciais do JSON a partir da variável de ambiente
 credentials_info = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
@@ -21,7 +21,7 @@ service = build('sheets', 'v4', credentials=credentials)
 
 @app.route('/', methods=['GET'])
 def home():
-    return 'API do Rol de Visitas funcionando!'
+    return '✅ API do Rol de Visitas funcionando!'
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -30,20 +30,26 @@ def webhook():
     matricula = parameters.get('matricula')
 
     if not matricula:
-        return jsonify({'fulfillmentText': 'Matrícula não informada.'})
+        return jsonify({'fulfillmentText': '⚠️ Matrícula não informada. Por favor, envie apenas a matrícula do preso (ex: 12345).'})
 
     sheet = service.spreadsheets()
     result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
     values = result.get('values', [])
 
-    resposta = 'Matrícula não encontrada.'
+    resposta = '❌ Matrícula não encontrada. Verifique se digitou corretamente.'
 
     for row in values:
-        if len(row) >= 2 and row[1] == matricula:
-            nome_visitante = row[0]
-            status_carteirinha = row[2] if len(row) > 2 else 'Sem status'
-            validade = row[3] if len(row) > 3 else 'Sem validade'
-            resposta = f'Visitante: {nome_visitante}\nStatus: {status_carteirinha}\nValidade: {validade}'
+        if len(row) >= 1 and row[0] == matricula:
+            nome_visitante = row[1] if len(row) > 1 else 'Desconhecido'
+            situacao = row[2] if len(row) > 2 else 'Indefinida'
+            motivo = row[3] if len(row) > 3 else 'Nenhum motivo informado'
+
+            resposta = (
+                f'🔎 *Carteirinha encontrada:*\n'
+                f'👤 Visitante: {nome_visitante}\n'
+                f'📌 Situação: {situacao}\n'
+                f'📄 Motivo: {motivo}'
+            )
             break
 
     return jsonify({'fulfillmentText': resposta})
