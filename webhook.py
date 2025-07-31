@@ -9,7 +9,7 @@ app = Flask(__name__)
 # Configuração da API do Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas_ok!A2:D'  # Nome da aba correta
+RANGE_NAME = 'carteirinhas_ok!A3:D'  # Nome da aba correta
 
 # Carrega as credenciais do JSON da variável de ambiente
 credentials_info = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
