@@ -167,10 +167,7 @@ def webhook():
 
         partes = []
         for idx, r in enumerate(resultados, start=1):
-            if r['situacao'].lower() == 'irregular':
-                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: Irregular")
-            else:
-                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}")
+            partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}")
 
         resposta = "Registros encontrados:\n" + "\n".join(partes)
         logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
@@ -200,4 +197,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info('🚀 Iniciando servidor na porta %d', port)
     app.run(host='0.0.0.0', port=port)
-
