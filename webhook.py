@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas_ok!A2:D100000'
+RANGE_NAME = 'carteirinhas!A2:D100000'
 
 def init_sheets_service():
     credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
