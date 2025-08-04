@@ -44,7 +44,7 @@ def init_sheets_service():
 service = init_sheets_service()
 
 _cache = {'rows': None, 'fetched_at': 0}
-CACHE_TTL = 30
+CACHE_TTL = 30  # segundos
 
 def fetch_all_rows(force_refresh=False):
     now = time.time()
@@ -95,7 +95,7 @@ def sanitize_situacao(raw_situacao):
 
 def clean_motivo(text):
     if not text:
-        return 'Nenhum motivo informado'
+        return ''
     text = str(text)
     text = text.replace('\n', ' ').replace('\r', ' ')
     text = ' '.join(text.split())
@@ -177,9 +177,10 @@ def webhook():
         partes = []
         for idx, r in enumerate(resultados, start=1):
             if r['situacao'].lower() == 'irregular':
-                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: Irregular")
+                motivo_final = r['motivo'] if r['motivo'] else 'Nenhum motivo informado'
             else:
-                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}")
+                motivo_final = 'Nenhum motivo informado'
+            partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {motivo_final}")
 
         resposta = "Registros encontrados:\n" + "\n".join(partes)
         logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
