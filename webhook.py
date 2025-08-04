@@ -93,6 +93,14 @@ def sanitize_situacao(raw_situacao):
         return 'Irregular'
     return str(raw_situacao).strip()
 
+def clean_motivo(text):
+    if not text:
+        return 'Nenhum motivo informado'
+    text = str(text)
+    text = text.replace('\n', ' ').replace('\r', ' ')
+    text = ' '.join(text.split())
+    return text
+
 def lookup_matricula_multiple(matricula, force_refresh=False):
     rows = fetch_all_rows(force_refresh=force_refresh)
     matches = []
@@ -104,7 +112,8 @@ def lookup_matricula_multiple(matricula, force_refresh=False):
             visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
             situacao_raw = row[2] if len(row) > 2 and row[2].strip() else ''
             situacao = sanitize_situacao(situacao_raw)
-            motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
+            motivo_raw = row[3] if len(row) > 3 and row[3].strip() else ''
+            motivo = clean_motivo(motivo_raw)
             matches.append({
                 'visitante': visitante,
                 'situacao': situacao,
@@ -167,7 +176,10 @@ def webhook():
 
         partes = []
         for idx, r in enumerate(resultados, start=1):
-            partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}")
+            if r['situacao'].lower() == 'irregular':
+                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: Irregular")
+            else:
+                partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}")
 
         resposta = "Registros encontrados:\n" + "\n".join(partes)
         logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
