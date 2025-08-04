@@ -16,7 +16,7 @@ app = Flask(__name__)
 # 🔁 Atualizado com o novo ID e aba
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carterinhas_ok!A2:D'
+RANGE_NAME = 'carteirinhas_ok!A2:D'
 
 # --- Inicialização do serviço do Sheets ---
 def init_sheets_service():
