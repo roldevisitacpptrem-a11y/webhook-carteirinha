@@ -38,23 +38,25 @@ def get_sheets_service():
         logger.exception('❗ Falha ao inicializar a API do Sheets')
         raise RuntimeError('Erro ao conectar com Google Sheets') from e
 
-# --- Cache com dicionário para lookup rápido ---
+# --- Cache ---
 _cache = {'dict': None, 'fetched_at': 0}
-CACHE_TTL = 30  # segundos
+CACHE_TTL = 30
 
 def clear_cache():
     _cache['dict'] = None
     _cache['fetched_at'] = 0
     logger.info('🧹 Cache manual limpo')
 
-# --- Normalização de matrícula ---
+# --- Normalização ---
 def normalize_matricula(raw):
     if not raw:
         return None
     cleaned = str(raw).strip()
     cleaned = re.sub(r'[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
-    cleaned = re.sub(r'[\s\.\-]', '', cleaned)  # remove espaços, pontos e hífens
-    return cleaned
+    cleaned = re.sub(r'[\s\.\-]', '', cleaned)
+    # Remove zeros à esquerda
+    cleaned = cleaned.lstrip('0')
+    return cleaned or '0'
 
 def sanitize_situacao(raw_situacao):
     if not raw_situacao:
@@ -70,7 +72,7 @@ def clean_motivo(text):
     text = str(text).replace('\n', ' ').replace('\r', ' ')
     return ' '.join(text.split())
 
-# --- Busca rápida via dicionário ---
+# --- Fetch e lookup ---
 def fetch_all_rows(force_refresh=False):
     now = time.time()
     if force_refresh or _cache['dict'] is None or now - _cache['fetched_at'] > CACHE_TTL:
@@ -90,9 +92,13 @@ def fetch_all_rows(force_refresh=False):
                 situacao = sanitize_situacao(row[2] if len(row) > 2 else '')
                 motivo = clean_motivo(row[3] if len(row) > 3 else '')
                 registro = {'visitante': visitante, 'situacao': situacao, 'motivo': motivo}
+
+                # Evita duplicatas
                 if matricula not in matr_dict:
                     matr_dict[matricula] = []
-                matr_dict[matricula].append(registro)
+                if registro not in matr_dict[matricula]:
+                    matr_dict[matricula].append(registro)
+
             _cache['dict'] = matr_dict
             _cache['fetched_at'] = now
             logger.debug('📄 Cache atualizado: %d matrículas únicas', len(matr_dict))
@@ -156,9 +162,9 @@ def webhook():
         partes = []
         for idx, r in enumerate(resultados, start=1):
             motivo_final = r['motivo'] if r['motivo'] else 'Nenhum motivo informado'
-            partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {motivo_final}")
+            partes.append(f"{idx}. 👤 {r['visitante']} | 📌 {r['situacao']} | 📄 {motivo_final}")
 
-        resposta = "Registros encontrados:\n" + "\n".join(partes)
+        resposta = "📋 *Registros encontrados:*\n" + "\n".join(partes)
         return jsonify({'fulfillmentText': resposta}), 200
 
     except Exception:
