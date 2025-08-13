@@ -16,7 +16,7 @@ app = Flask(__name__)
 # 🔁 Atualizado com intervalo grande pra evitar erro
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas!A2:D100000'  # intervalo ampliado
+RANGE_NAME = 'carteirinhas_ok!A2:D100000'  # intervalo ampliado
 
 # --- Inicialização do serviço do Sheets ---
 def init_sheets_service():
@@ -123,14 +123,13 @@ def webhook():
             logger.warning('⚠️ JSON inválido ou não fornecido')
             return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 400
 
-        logger.debug('📄 Payload recebido: %s', json.dumps(data, ensure_ascii=False))
         raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
-        logger.info('🔍 Matrícula bruta recebida: %r (tipo: %s)', raw_matricula, type(raw_matricula))
+        logger.info('🔍 Matrícula bruta recebida: %r', raw_matricula)
         matricula = normalize_matricula(raw_matricula)
-        logger.info('🔁 Matrícula após normalização: %r (tipo: %s)', matricula, type(matricula))
+        logger.info('🔁 Matrícula após normalização: %r', matricula)
 
         if not matricula:
-            logger.warning('⚠️ Matrícula inválida ou ausente: %s', raw_matricula)
+            logger.warning('⚠️ Matrícula inválida ou ausente')
             return jsonify({'fulfillmentText': '⚠️ Matrícula inválida ou não informada.'}), 400
 
         try:
@@ -142,26 +141,19 @@ def webhook():
 
         if not resultados:
             logger.warning('❌ Matrícula %s não encontrada', matricula)
-            sample_keys = []
-            try:
-                sample_rows = fetch_all_rows()[:50]
-                sample_keys = [clean_key(r[0]) for r in sample_rows if r]
-            except Exception:
-                pass
-            logger.debug('Chaves presentes nas primeiras 50 linhas: %s', sample_keys)
             return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
 
-        partes = []
+        # --- Construindo mensagens individuais ---
+        fulfillment_messages = []
         for idx, r in enumerate(resultados, start=1):
             complemento = ''
             if r['situacao'].strip().lower() == 'irregular':
                 complemento = ' (precisa enviar comprovante de endereço com declaração autenticada)'
-            partes.append(
-                f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']}{complemento} | 📄 Motivo: {r['motivo']}"
-            )
-        resposta = "Registros encontrados:\n" + "\n".join(partes)
+            msg = f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']}{complemento} | 📄 Motivo: {r['motivo']}"
+            fulfillment_messages.append({"text": {"text": [msg]}})
+
         logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
-        return jsonify({'fulfillmentText': resposta}), 200
+        return jsonify({"fulfillmentMessages": fulfillment_messages}), 200
 
     except Exception:
         logger.exception('❗ Erro não esperado no webhook')
