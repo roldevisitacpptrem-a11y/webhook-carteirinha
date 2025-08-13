@@ -1,110 +1,189 @@
 from flask import Flask, request, jsonify
-import logging
-import re
 import os
+import json
+import logging
+import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # --- Configuração de logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# --- Configuração do Google Sheets ---
-SERVICE_ACCOUNT_FILE = 'service_account.json'
+# 🔁 Atualizado com intervalo grande pra evitar erro
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas_ok!A2:D'
+RANGE_NAME = 'carteirinhas_ok!A2:D100000'  # intervalo ampliado
 
-if not os.path.exists(SERVICE_ACCOUNT_FILE):
-    logger.error(f'O arquivo {SERVICE_ACCOUNT_FILE} não foi encontrado. O deploy vai falhar!')
-else:
-    credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-    )
-    service = build('sheets', 'v4', credentials=credentials)
-    logger.info('✅ Conexão com Google Sheets configurada com sucesso.')
+# --- Inicialização do serviço do Sheets ---
+def init_sheets_service():
+    credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    if not credentials_json:
+        logger.error('❌ Credenciais do Google não configuradas')
+        raise RuntimeError('Credenciais do Google não configuradas')
 
-# --- Funções auxiliares ---
-def normalize_matricula(raw):
-    """Remove espaços e caracteres invisíveis"""
-    if not raw:
-        return None
-    cleaned = str(raw).strip()
-    cleaned = re.sub(r'[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
-    return cleaned or None
-
-def sanitize_situacao(situacao):
-    """Garante que situação não venha com caracteres estranhos"""
-    return str(situacao).strip() if situacao else ''
-
-def clean_motivo(motivo):
-    """Limpa motivos vazios ou nulos"""
-    return str(motivo).strip() if motivo else ''
-
-def fetch_all_rows():
-    """Busca todas as linhas da planilha direto, sem cache"""
     try:
-        sheet = service.spreadsheets()
-        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
-        rows = result.get('values', [])
-        matr_dict = {}
-        for idx, row in enumerate(rows, start=2):
-            matricula = normalize_matricula(row[0])
-            if not matricula:
-                logger.warning(f'Linha {idx}: matrícula vazia ou inválida')
-                continue
-            visitante = row[1].strip() if len(row) > 1 else 'Desconhecido'
-            situacao = sanitize_situacao(row[2] if len(row) > 2 else '')
-            motivo = clean_motivo(row[3] if len(row) > 3 else '')
-            registro = {'visitante': visitante, 'situacao': situacao, 'motivo': motivo}
-            matr_dict[matricula] = [registro]
-        logger.info(f'🔹 Matrículas carregadas: {len(matr_dict)}')
-        return matr_dict
-    except HttpError as err:
-        logger.error('Erro ao acessar Google Sheets: %s', err)
-        return {}
-    except Exception as e:
-        logger.error('Erro inesperado ao buscar dados: %s', e)
-        return {}
+        credentials_info = json.loads(credentials_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_info,
+            scopes=SCOPES
+        )
+        service = build('sheets', 'v4', credentials=credentials, cache_discovery=False)
+        logger.info('✅ Conexão com Google Sheets estabelecida')
+        return service
+    except json.JSONDecodeError as e:
+        logger.error('❗ JSON de credenciais inválido: %s', e)
+        raise RuntimeError('Credenciais malformadas') from e
+    except Exception:
+        logger.exception('❗ Falha ao inicializar a API do Sheets')
+        raise RuntimeError('Erro ao conectar com Google Sheets')
 
-def lookup_matricula(matricula):
-    """Procura matrícula exata"""
-    matr_dict = fetch_all_rows()
-    matricula_clean = normalize_matricula(matricula)
-    logger.info(f'🔹 Matrícula recebida: "{matricula}" | Normalizada: "{matricula_clean}"')
-    resultados = matr_dict.get(matricula_clean, [])
-    if not resultados:
-        logger.info(f'❌ Matrícula "{matricula_clean}" não encontrada.')
-    return resultados
+service = init_sheets_service()
 
-# --- Webhook Flask ---
+# --- Cache manual com TTL ---
+_cache = {'rows': None, 'fetched_at': 0}
+CACHE_TTL = 30  # segundos
+
+def fetch_all_rows(force_refresh: bool = False):
+    now = time.time()
+    if force_refresh or _cache['rows'] is None or now - _cache['fetched_at'] > CACHE_TTL:
+        try:
+            sheet = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID,
+                range=RANGE_NAME
+            ).execute()
+            _cache['rows'] = sheet.get('values', [])
+            _cache['fetched_at'] = now
+            logger.debug('📄 Cache atualizado: %d linhas', len(_cache['rows']))
+        except HttpError as e:
+            logger.error('❗ Erro ao acessar a planilha: %s', e)
+            raise
+        except Exception:
+            logger.exception('❗ Erro inesperado ao buscar dados da planilha')
+            raise
+    else:
+        logger.debug('♻ Usando cache da planilha (há %.1f segundos)', now - _cache['fetched_at'])
+    return _cache['rows']
+
+def clear_cache():
+    _cache['rows'] = None
+    _cache['fetched_at'] = 0
+    logger.info('🧹 Cache manual limpo')
+
+# --- Helpers ---
+def normalize_matricula(raw):
+    if raw is None:
+        return None
+    try:
+        cleaned = str(raw).strip().replace(',', '.')
+        intval = int(float(cleaned))
+        return str(intval)
+    except (ValueError, TypeError):
+        return None
+
+def clean_key(s):
+    return ''.join(c for c in str(s).strip() if c.isprintable())
+
+def lookup_matricula_multiple(matricula, force_refresh=False):
+    rows = fetch_all_rows(force_refresh=force_refresh)
+    matches = []
+    logger.debug(f"lookup_matricula_multiple: procurando pela matrícula {matricula} em {len(rows)} linhas")
+    for row in rows:
+        if not row:
+            continue
+        matricula_planilha = clean_key(row[0])
+        logger.debug(f'Comparando matrícula {matricula_planilha} com {matricula}')
+        if matricula_planilha == clean_key(matricula):
+            visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
+            situacao = row[2] if len(row) > 2 and row[2].strip() else 'Indefinida'
+            motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
+            matches.append({
+                'visitante': visitante,
+                'situacao': situacao,
+                'motivo': motivo
+            })
+    logger.debug(f"lookup_matricula_multiple: encontrou {len(matches)} correspondência(s)")
+    return matches
+
+# --- Rotas ---
+@app.route('/', methods=['GET'])
+def home():
+    logger.info('🏠 Endpoint raiz acessado')
+    return '✅ API do Rol de Visitas funcionando!'
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json()
-    if not data:
-        logger.warning('⚠️ Requisição sem JSON recebido')
-        return jsonify({'fulfillmentText': 'Erro: não foi possível ler os dados da requisição.'})
+    logger.info('📥 Requisição recebida no /webhook')
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            logger.warning('⚠️ JSON inválido ou não fornecido')
+            return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 400
 
-    raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
-    if not raw_matricula:
-        return jsonify({'fulfillmentText': 'Por favor, digite a matrícula.'})
+        logger.debug('📄 Payload recebido: %s', json.dumps(data, ensure_ascii=False))
+        raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
+        logger.info('🔍 Matrícula bruta recebida: %r (tipo: %s)', raw_matricula, type(raw_matricula))
+        matricula = normalize_matricula(raw_matricula)
+        logger.info('🔁 Matrícula após normalização: %r (tipo: %s)', matricula, type(matricula))
 
-    resultados = lookup_matricula(raw_matricula)
-    if not resultados:
-        return jsonify({'fulfillmentText': f'Matrícula "{raw_matricula}" não encontrada.'})
+        if not matricula:
+            logger.warning('⚠️ Matrícula inválida ou ausente: %s', raw_matricula)
+            return jsonify({'fulfillmentText': '⚠️ Matrícula inválida ou não informada.'}), 400
 
-    resposta = []
-    for r in resultados:
-        texto = f'Visitante: {r["visitante"]}\nSituação: {r["situacao"]}'
-        if r["motivo"]:
-            texto += f'\nMotivo: {r["motivo"]}'
-        resposta.append(texto)
+        try:
+            resultados = lookup_matricula_multiple(matricula)
+        except HttpError:
+            return jsonify({'fulfillmentText': '❌ Erro ao acessar a planilha. Tente novamente mais tarde.'}), 500
+        except Exception:
+            return jsonify({'fulfillmentText': '❌ Erro interno ao buscar dados.'}), 500
 
-    return jsonify({'fulfillmentText': '\n\n'.join(resposta)})
+        if not resultados:
+            logger.warning('❌ Matrícula %s não encontrada', matricula)
+            sample_keys = []
+            try:
+                sample_rows = fetch_all_rows()[:50]
+                sample_keys = [clean_key(r[0]) for r in sample_rows if r]
+            except Exception:
+                pass
+            logger.debug('Chaves presentes nas primeiras 50 linhas: %s', sample_keys)
+            return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
+
+        partes = []
+        for idx, r in enumerate(resultados, start=1):
+            complemento = ''
+            if r['situacao'].strip().lower() == 'irregular':
+                complemento = ' (precisa enviar comprovante de endereço com declaração autenticada)'
+            partes.append(
+                f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']}{complemento} | 📄 Motivo: {r['motivo']}"
+            )
+        resposta = "Registros encontrados:\n" + "\n".join(partes)
+        logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
+        return jsonify({'fulfillmentText': resposta}), 200
+
+    except Exception:
+        logger.exception('❗ Erro não esperado no webhook')
+        return jsonify({'fulfillmentText': '❌ Erro interno.'}), 500
+
+@app.route('/debug_rows', methods=['GET'])
+def debug_rows():
+    try:
+        rows = fetch_all_rows()
+        sample = rows[:20]
+        logger.info('Amostra das primeiras 20 linhas solicitada via /debug_rows')
+        return jsonify({'sample': sample}), 200
+    except Exception:
+        logger.exception('Erro ao buscar linhas para debug')
+        return jsonify({'error': 'Falha ao obter linhas'}), 500
+
+@app.route('/refresh_cache', methods=['POST', 'GET'])
+def refresh_cache():
+    clear_cache()
+    return jsonify({'status': 'cache limpo'}), 200
 
 if __name__ == '__main__':
-    logger.info('🌐 Servidor iniciando em 0.0.0.0:5000')
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    logger.info('🚀 Iniciando servidor na porta %d', port)
+    app.run(host='0.0.0.0', port=port)
