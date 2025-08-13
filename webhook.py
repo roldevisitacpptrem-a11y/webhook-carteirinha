@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# --- Configurações do Google Sheets ---
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas!A2:D100000'
+RANGE_NAME = 'carteirinhas_ok!A2:D100000'  # Aba correta
 
 # --- Criação isolada do serviço Google Sheets ---
 def get_sheets_service():
@@ -39,6 +40,7 @@ def get_sheets_service():
         logger.exception('❗ Falha ao inicializar a API do Sheets')
         raise RuntimeError('Erro ao conectar com Google Sheets')
 
+# --- Cache para planilha ---
 _cache = {'rows': None, 'fetched_at': 0}
 CACHE_TTL = 30  # segundos
 
@@ -69,18 +71,14 @@ def clear_cache():
     _cache['fetched_at'] = 0
     logger.info('🧹 Cache manual limpo')
 
+# --- Normalização de matrícula ---
 def normalize_matricula(raw):
-    if raw is None:
+    """Remove espaços, caracteres invisíveis e mantém números ou letras."""
+    if not raw:
         return None
-    try:
-        cleaned = str(raw).strip().replace(',', '.')
-        intval = int(float(cleaned))
-        return str(intval)
-    except (ValueError, TypeError):
-        return None
-
-def clean_key(s):
-    return ''.join(c for c in str(s).strip() if c.isprintable())
+    cleaned = str(raw).strip()
+    cleaned = ''.join(c for c in cleaned if c.isprintable())
+    return cleaned
 
 def sanitize_situacao(raw_situacao):
     if not raw_situacao:
@@ -93,24 +91,26 @@ def sanitize_situacao(raw_situacao):
 def clean_motivo(text):
     if not text:
         return ''
-    text = str(text)
-    text = text.replace('\n', ' ').replace('\r', ' ')
-    text = ' '.join(text.split())
-    return text
+    text = str(text).replace('\n', ' ').replace('\r', ' ')
+    return ' '.join(text.split())
 
+# --- Lookup de matrícula ---
 def lookup_matricula_multiple(matricula, force_refresh=False):
     rows = fetch_all_rows(force_refresh=force_refresh)
+    matricula_clean = normalize_matricula(matricula)
     matches = []
+
+    # DEBUG TEMPORÁRIO: verificar primeiras matrículas lidas
+    logger.debug('🔎 Matrículas lidas da planilha: %s', [normalize_matricula(r[0]) for r in rows[:50]])
+
     for row in rows:
         if not row:
             continue
-        matricula_planilha = clean_key(row[0])
-        if matricula_planilha == clean_key(matricula):
-            visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
-            situacao_raw = row[2] if len(row) > 2 and row[2].strip() else ''
-            situacao = sanitize_situacao(situacao_raw)
-            motivo_raw = row[3] if len(row) > 3 and row[3].strip() else ''
-            motivo = clean_motivo(motivo_raw)
+        matricula_planilha = normalize_matricula(row[0])
+        if matricula_planilha == matricula_clean:
+            visitante = row[1].strip() if len(row) > 1 and row[1].strip() else 'Desconhecido'
+            situacao = sanitize_situacao(row[2] if len(row) > 2 else '')
+            motivo = clean_motivo(row[3] if len(row) > 3 else '')
             matches.append({
                 'visitante': visitante,
                 'situacao': situacao,
@@ -118,6 +118,7 @@ def lookup_matricula_multiple(matricula, force_refresh=False):
             })
     return matches
 
+# --- Keep-alive para hospedagens free ---
 def keep_alive_ping(interval=240):
     def ping_loop():
         while True:
@@ -137,6 +138,7 @@ def keep_alive_ping(interval=240):
 
 keep_alive_ping()
 
+# --- Endpoints ---
 @app.route('/', methods=['GET'])
 def home():
     logger.info('🏠 Endpoint raiz acessado')
@@ -173,10 +175,7 @@ def webhook():
 
         partes = []
         for idx, r in enumerate(resultados, start=1):
-            if r['situacao'].lower() == 'irregular':
-                motivo_final = r['motivo'] if r['motivo'] else 'Nenhum motivo informado'
-            else:
-                motivo_final = 'Nenhum motivo informado'
+            motivo_final = r['motivo'] if r['situacao'].lower() == 'irregular' and r['motivo'] else 'Nenhum motivo informado'
             partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {motivo_final}")
 
         resposta = "Registros encontrados:\n" + "\n".join(partes)
