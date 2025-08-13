@@ -47,15 +47,13 @@ def clear_cache():
     _cache['fetched_at'] = 0
     logger.info('🧹 Cache manual limpo')
 
-# --- Normalização ---
+# --- Normalização simplificada ---
 def normalize_matricula(raw):
     if not raw:
         return None
     cleaned = str(raw).strip()
-    cleaned = re.sub(r'[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
-    cleaned = re.sub(r'[\s\.\-]', '', cleaned)
-    cleaned = cleaned.lstrip('0')
-    return cleaned or '0'
+    cleaned = re.sub(r'[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
+    return cleaned or None
 
 def sanitize_situacao(raw_situacao):
     if not raw_situacao:
@@ -84,7 +82,7 @@ def fetch_all_rows(force_refresh=False):
             rows = sheet.get('values', [])
             matr_dict = {}
             for row in rows:
-                if not row or not row[0].strip():
+                if not row or not row[0].strip() or row[0].strip().lower() == 'matricula':
                     continue
                 matricula = normalize_matricula(row[0])
                 visitante = row[1].strip() if len(row) > 1 and row[1].strip() else 'Desconhecido'
@@ -92,7 +90,6 @@ def fetch_all_rows(force_refresh=False):
                 motivo = clean_motivo(row[3] if len(row) > 3 else '')
                 registro = {'visitante': visitante, 'situacao': situacao, 'motivo': motivo}
 
-                # Evita duplicatas
                 if matricula not in matr_dict:
                     matr_dict[matricula] = []
                 if registro not in matr_dict[matricula]:
@@ -114,6 +111,8 @@ def fetch_all_rows(force_refresh=False):
 def lookup_matricula(matricula, force_refresh=False):
     matr_dict = fetch_all_rows(force_refresh=force_refresh)
     matricula_clean = normalize_matricula(matricula)
+    logger.debug('💠 Procurando matrícula "%s" no cache', matricula_clean)
+    logger.debug('💠 Matrículas disponíveis no cache (exemplo 20 primeiras): %s', list(matr_dict.keys())[:20])
     return matr_dict.get(matricula_clean, [])
 
 # --- Keep-alive ---
@@ -147,7 +146,6 @@ def webhook():
         if not data:
             return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 400
 
-        # Extração da matrícula
         raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
         logger.debug('🔹 Matrícula bruta recebida: "%s"', raw_matricula)
 
@@ -157,9 +155,7 @@ def webhook():
         if not matricula:
             return jsonify({'fulfillmentText': '⚠️ Matrícula inválida ou não informada.'}), 400
 
-        # Lookup
         resultados = lookup_matricula(matricula, force_refresh=True)
-        logger.debug('🔹 Matrículas disponíveis no cache (exemplo 20 primeiras): %s', list(_cache['dict'].keys())[:20])
         logger.debug('🔹 Resultados encontrados: %s', resultados)
 
         if not resultados:
