@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# 🔁 Atualizado com intervalo grande pra evitar erro
+# 🔁 Configuração do Google Sheets
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
-RANGE_NAME = 'carteirinhas_ok!A2:D100000'  # intervalo ampliado
+RANGE_NAME = 'carteirinhas_ok!A2:D100000'
 
 # --- Inicialização do serviço do Sheets ---
 def init_sheets_service():
@@ -43,7 +43,7 @@ def init_sheets_service():
 
 service = init_sheets_service()
 
-# --- Cache manual com TTL ---
+# --- Cache manual ---
 _cache = {'rows': None, 'fetched_at': 0}
 CACHE_TTL = 30  # segundos
 
@@ -77,12 +77,7 @@ def clear_cache():
 def normalize_matricula(raw):
     if raw is None:
         return None
-    try:
-        cleaned = str(raw).strip().replace(',', '.')
-        intval = int(float(cleaned))
-        return str(intval)
-    except (ValueError, TypeError):
-        return None
+    return str(raw).strip()  # remove apenas espaços, sem conversão
 
 def clean_key(s):
     return ''.join(c for c in str(s).strip() if c.isprintable())
@@ -90,7 +85,7 @@ def clean_key(s):
 def lookup_matricula_multiple(matricula, force_refresh=False):
     rows = fetch_all_rows(force_refresh=force_refresh)
     matches = []
-    logger.debug(f"lookup_matricula_multiple: procurando pela matrícula {matricula} em {len(rows)} linhas")
+    logger.debug(f"lookup_matricula_multiple: procurando matrícula {matricula} em {len(rows)} linhas")
     for row in rows:
         if not row:
             continue
@@ -143,13 +138,10 @@ def webhook():
             logger.warning('❌ Matrícula %s não encontrada', matricula)
             return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
 
-        # --- Construindo mensagens individuais ---
+        # --- Construindo mensagens individuais respeitando a planilha ---
         fulfillment_messages = []
         for idx, r in enumerate(resultados, start=1):
-            complemento = ''
-            if r['situacao'].strip().lower() == 'irregular':
-                complemento = ' (precisa enviar comprovante de endereço com declaração autenticada)'
-            msg = f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']}{complemento} | 📄 Motivo: {r['motivo']}"
+            msg = f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}"
             fulfillment_messages.append({"text": {"text": [msg]}})
 
         logger.info('✅ Matrícula %s teve %d correspondência(s)', matricula, len(resultados))
