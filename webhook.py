@@ -54,7 +54,6 @@ def normalize_matricula(raw):
     cleaned = str(raw).strip()
     cleaned = re.sub(r'[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
     cleaned = re.sub(r'[\s\.\-]', '', cleaned)
-    # Remove zeros à esquerda
     cleaned = cleaned.lstrip('0')
     return cleaned or '0'
 
@@ -143,18 +142,25 @@ def home():
 def webhook():
     try:
         data = request.get_json(silent=True)
+        logger.debug('📦 Payload recebido: %s', json.dumps(data, indent=2))
+
         if not data:
             return jsonify({'fulfillmentText': '⚠️ Requisição inválida: JSON não fornecido.'}), 400
 
+        # Extração da matrícula
         raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
+        logger.debug('🔹 Matrícula bruta recebida: "%s"', raw_matricula)
+
         matricula = normalize_matricula(raw_matricula)
-        logger.debug('🔍 Matrícula recebida: "%s", normalizada: "%s"', raw_matricula, matricula)
+        logger.debug('🔹 Matrícula normalizada: "%s"', matricula)
 
         if not matricula:
             return jsonify({'fulfillmentText': '⚠️ Matrícula inválida ou não informada.'}), 400
 
-        resultados = lookup_matricula(matricula)
-        logger.debug('🔍 Resultados encontrados: %s', resultados)
+        # Lookup
+        resultados = lookup_matricula(matricula, force_refresh=True)
+        logger.debug('🔹 Matrículas disponíveis no cache (exemplo 20 primeiras): %s', list(_cache['dict'].keys())[:20])
+        logger.debug('🔹 Resultados encontrados: %s', resultados)
 
         if not resultados:
             return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
