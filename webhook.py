@@ -19,29 +19,25 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
 RANGE_NAME = 'carteirinhas!A2:D100000'
 
-def init_sheets_service():
+# --- Criação isolada do serviço Google Sheets ---
+def get_sheets_service():
     credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
     if not credentials_json:
         logger.error('❌ Credenciais do Google não configuradas')
         raise RuntimeError('Credenciais do Google não configuradas')
-
     try:
         credentials_info = json.loads(credentials_json)
         credentials = service_account.Credentials.from_service_account_info(
             credentials_info,
             scopes=SCOPES
         )
-        service = build('sheets', 'v4', credentials=credentials, cache_discovery=False)
-        logger.info('✅ Conexão com Google Sheets estabelecida')
-        return service
+        return build('sheets', 'v4', credentials=credentials, cache_discovery=False)
     except json.JSONDecodeError as e:
         logger.error('❗ JSON de credenciais inválido: %s', e)
         raise RuntimeError('Credenciais malformadas') from e
     except Exception:
         logger.exception('❗ Falha ao inicializar a API do Sheets')
         raise RuntimeError('Erro ao conectar com Google Sheets')
-
-service = init_sheets_service()
 
 _cache = {'rows': None, 'fetched_at': 0}
 CACHE_TTL = 30  # segundos
@@ -50,6 +46,7 @@ def fetch_all_rows(force_refresh=False):
     now = time.time()
     if force_refresh or _cache['rows'] is None or now - _cache['fetched_at'] > CACHE_TTL:
         try:
+            service = get_sheets_service()
             sheet = service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID,
                 range=RANGE_NAME
