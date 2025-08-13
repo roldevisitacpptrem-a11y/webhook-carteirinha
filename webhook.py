@@ -5,6 +5,7 @@ import logging
 import time
 import threading
 import requests
+import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -41,6 +42,35 @@ def get_sheets_service():
 _cache = {'dict': None, 'fetched_at': 0}
 CACHE_TTL = 30  # segundos
 
+def clear_cache():
+    _cache['dict'] = None
+    _cache['fetched_at'] = 0
+    logger.info('🧹 Cache manual limpo')
+
+# --- Normalização de matrícula ---
+def normalize_matricula(raw):
+    if not raw:
+        return None
+    cleaned = str(raw).strip()
+    # Remove caracteres invisíveis comuns (ZWSP, BOM, etc.)
+    cleaned = re.sub(r'[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
+    return cleaned
+
+def sanitize_situacao(raw_situacao):
+    if not raw_situacao:
+        return 'Indefinida'
+    text = str(raw_situacao).strip().lower()
+    if 'irregular' in text:
+        return 'Irregular'
+    return str(raw_situacao).strip()
+
+def clean_motivo(text):
+    if not text:
+        return ''
+    text = str(text).replace('\n', ' ').replace('\r', ' ')
+    return ' '.join(text.split())
+
+# --- Busca rápida via dicionário ---
 def fetch_all_rows(force_refresh=False):
     now = time.time()
     if force_refresh or _cache['dict'] is None or now - _cache['fetched_at'] > CACHE_TTL:
@@ -51,14 +81,11 @@ def fetch_all_rows(force_refresh=False):
                 range=RANGE_NAME
             ).execute()
             rows = sheet.get('values', [])
-            # Construir dicionário de lookup: matricula -> lista de registros
             matr_dict = {}
             for row in rows:
-                if not row:
+                if not row or not row[0].strip():
                     continue
                 matricula = normalize_matricula(row[0])
-                if not matricula:
-                    continue
                 visitante = row[1].strip() if len(row) > 1 and row[1].strip() else 'Desconhecido'
                 situacao = sanitize_situacao(row[2] if len(row) > 2 else '')
                 motivo = clean_motivo(row[3] if len(row) > 3 else '')
@@ -79,34 +106,6 @@ def fetch_all_rows(force_refresh=False):
         logger.debug('♻ Usando cache da planilha (há %.1f segundos)', now - _cache['fetched_at'])
     return _cache['dict']
 
-def clear_cache():
-    _cache['dict'] = None
-    _cache['fetched_at'] = 0
-    logger.info('🧹 Cache manual limpo')
-
-# --- Normalização ---
-def normalize_matricula(raw):
-    if not raw:
-        return None
-    cleaned = str(raw).strip()
-    cleaned = ''.join(c for c in cleaned if c.isprintable())
-    return cleaned
-
-def sanitize_situacao(raw_situacao):
-    if not raw_situacao:
-        return 'Indefinida'
-    text = str(raw_situacao).strip().lower()
-    if 'irregular' in text:
-        return 'Irregular'
-    return str(raw_situacao).strip()
-
-def clean_motivo(text):
-    if not text:
-        return ''
-    text = str(text).replace('\n', ' ').replace('\r', ' ')
-    return ' '.join(text.split())
-
-# --- Lookup rápido via dicionário ---
 def lookup_matricula(matricula, force_refresh=False):
     matr_dict = fetch_all_rows(force_refresh=force_refresh)
     matricula_clean = normalize_matricula(matricula)
