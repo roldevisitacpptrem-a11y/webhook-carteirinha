@@ -3,17 +3,18 @@ import os
 import json
 import logging
 import time
+import threading
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# --- Configuração de logging ---
+# --- Logging ---
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# 🔁 Configuração do Google Sheets
+# --- Google Sheets ---
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1EpGuRD02oPPJOT1O6L08aqWWZuD25ZmkV9jD6rUoeAg'
 RANGE_NAME = 'carteirinhas!A2:D100000'
@@ -43,65 +44,69 @@ def init_sheets_service():
 
 service = init_sheets_service()
 
-# --- Cache manual ---
+# --- Cache com lock ---
 _cache = {'rows': None, 'fetched_at': 0}
+_index = None
+_cache_lock = threading.Lock()
 CACHE_TTL = 30  # segundos
 
 def fetch_all_rows(force_refresh: bool = False):
+    global _index
     now = time.time()
-    if force_refresh or _cache['rows'] is None or now - _cache['fetched_at'] > CACHE_TTL:
-        try:
-            sheet = service.spreadsheets().values().get(
-                spreadsheetId=SPREADSHEET_ID,
-                range=RANGE_NAME
-            ).execute()
-            _cache['rows'] = sheet.get('values', [])
-            _cache['fetched_at'] = now
-            logger.debug('📄 Cache atualizado: %d linhas', len(_cache['rows']))
-        except HttpError as e:
-            logger.error('❗ Erro ao acessar a planilha: %s', e)
-            raise
-        except Exception:
-            logger.exception('❗ Erro inesperado ao buscar dados da planilha')
-            raise
-    else:
-        logger.debug('♻ Usando cache da planilha (há %.1f segundos)', now - _cache['fetched_at'])
+    with _cache_lock:
+        if force_refresh or _cache['rows'] is None or now - _cache['fetched_at'] > CACHE_TTL:
+            try:
+                sheet = service.spreadsheets().values().get(
+                    spreadsheetId=SPREADSHEET_ID,
+                    range=RANGE_NAME
+                ).execute()
+                _cache['rows'] = sheet.get('values', [])
+                _cache['fetched_at'] = now
+                _index = None  # resetar índice
+                logger.debug('📄 Cache atualizado: %d linhas', len(_cache['rows']))
+            except HttpError as e:
+                logger.error('❗ Erro ao acessar a planilha: %s', e)
+                raise
+            except Exception:
+                logger.exception('❗ Erro inesperado ao buscar dados da planilha')
+                raise
+        else:
+            logger.debug('♻ Usando cache da planilha (há %.1f segundos)', now - _cache['fetched_at'])
     return _cache['rows']
 
 def clear_cache():
-    _cache['rows'] = None
-    _cache['fetched_at'] = 0
-    logger.info('🧹 Cache manual limpo')
+    global _index
+    with _cache_lock:
+        _cache['rows'] = None
+        _cache['fetched_at'] = 0
+        _index = None
+        logger.info('🧹 Cache manual limpo')
 
 # --- Helpers ---
 def normalize_matricula(raw):
     if raw is None:
         return None
-    return str(raw).strip()  # remove apenas espaços, sem conversão
+    return str(raw).strip()
 
 def clean_key(s):
     return ''.join(c for c in str(s).strip() if c.isprintable())
 
+def build_index():
+    global _index
+    rows = fetch_all_rows()
+    _index = {clean_key(row[0]): row for row in rows if row}
+
 def lookup_matricula_multiple(matricula, force_refresh=False):
-    rows = fetch_all_rows(force_refresh=force_refresh)
-    matches = []
-    logger.debug(f"lookup_matricula_multiple: procurando matrícula {matricula} em {len(rows)} linhas")
-    for row in rows:
-        if not row:
-            continue
-        matricula_planilha = clean_key(row[0])
-        logger.debug(f'Comparando matrícula {matricula_planilha} com {matricula}')
-        if matricula_planilha == clean_key(matricula):
-            visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
-            situacao = row[2] if len(row) > 2 and row[2].strip() else 'Indefinida'
-            motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
-            matches.append({
-                'visitante': visitante,
-                'situacao': situacao,
-                'motivo': motivo
-            })
-    logger.debug(f"lookup_matricula_multiple: encontrou {len(matches)} correspondência(s)")
-    return matches
+    global _index
+    if _index is None or force_refresh:
+        build_index()
+    row = _index.get(clean_key(matricula))
+    if not row:
+        return []
+    visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
+    situacao = row[2] if len(row) > 2 and row[2].strip() else 'Indefinida'
+    motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
+    return [{'visitante': visitante, 'situacao': situacao, 'motivo': motivo}]
 
 # --- Rotas ---
 @app.route('/', methods=['GET'])
@@ -138,7 +143,6 @@ def webhook():
             logger.warning('❌ Matrícula %s não encontrada', matricula)
             return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
 
-        # --- Construindo mensagens individuais respeitando a planilha ---
         fulfillment_messages = []
         for idx, r in enumerate(resultados, start=1):
             msg = f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {r['motivo']}"
