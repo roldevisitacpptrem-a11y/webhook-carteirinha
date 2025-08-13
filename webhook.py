@@ -52,8 +52,8 @@ def normalize_matricula(raw):
     if not raw:
         return None
     cleaned = str(raw).strip()
-    # Remove caracteres invisíveis comuns (ZWSP, BOM, etc.)
     cleaned = re.sub(r'[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2060\uFEFF]', '', cleaned)
+    cleaned = re.sub(r'[\s\.\-]', '', cleaned)  # remove espaços, pontos e hífens
     return cleaned
 
 def sanitize_situacao(raw_situacao):
@@ -142,16 +142,20 @@ def webhook():
 
         raw_matricula = data.get('queryResult', {}).get('parameters', {}).get('matricula')
         matricula = normalize_matricula(raw_matricula)
+        logger.debug('🔍 Matrícula recebida: "%s", normalizada: "%s"', raw_matricula, matricula)
+
         if not matricula:
             return jsonify({'fulfillmentText': '⚠️ Matrícula inválida ou não informada.'}), 400
 
         resultados = lookup_matricula(matricula)
+        logger.debug('🔍 Resultados encontrados: %s', resultados)
+
         if not resultados:
             return jsonify({'fulfillmentText': f'❌ Nenhuma informação encontrada para a matrícula {matricula}.'}), 200
 
         partes = []
         for idx, r in enumerate(resultados, start=1):
-            motivo_final = r['motivo'] if r['situacao'].lower() == 'irregular' and r['motivo'] else 'Nenhum motivo informado'
+            motivo_final = r['motivo'] if r['motivo'] else 'Nenhum motivo informado'
             partes.append(f"{idx}. 👤 Visitante: {r['visitante']} | 📌 Situação: {r['situacao']} | 📄 Motivo: {motivo_final}")
 
         resposta = "Registros encontrados:\n" + "\n".join(partes)
