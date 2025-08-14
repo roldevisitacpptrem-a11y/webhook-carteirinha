@@ -94,19 +94,32 @@ def clean_key(s):
 def build_index():
     global _index
     rows = fetch_all_rows()
-    _index = {clean_key(row[0]): row for row in rows if row}
+    _index = {}
+    for row in rows:
+        if not row:
+            continue
+        key = clean_key(row[0])
+        if key not in _index:
+            _index[key] = []
+        _index[key].append(row)
 
 def lookup_matricula_multiple(matricula, force_refresh=False):
     global _index
     if _index is None or force_refresh:
         build_index()
-    row = _index.get(clean_key(matricula))
-    if not row:
-        return []
-    visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
-    situacao = row[2] if len(row) > 2 and row[2].strip() else 'Indefinida'
-    motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
-    return [{'visitante': visitante, 'situacao': situacao, 'motivo': motivo}]
+    rows = _index.get(clean_key(matricula), [])
+    resultados = []
+    for row in rows:
+        visitante = row[1] if len(row) > 1 and row[1].strip() else 'Desconhecido'
+        situacao = row[2] if len(row) > 2 and row[2].strip() else 'Indefinida'
+        motivo = row[3] if len(row) > 3 and row[3].strip() else 'Nenhum motivo informado'
+        resultados.append({
+            'visitante': visitante,
+            'situacao': situacao,
+            'motivo': motivo
+        })
+    return resultados
+
 
 # --- Rotas ---
 @app.route('/', methods=['GET'])
